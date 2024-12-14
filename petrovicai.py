@@ -7,6 +7,11 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
 import openai
 import base64
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename='bot_log.log', filemode='a')
+logger = logging.getLogger()
 
 # Read tokens from config file
 config = ConfigParser()
@@ -51,18 +56,24 @@ async def get_openai_response(prompt, image_path=None):
                       {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
                     ]}
                 ]
+                logger.info(f"Sending to OpenAI (image): {messages}")
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=messages
                 )
         else:
+            logger.info(f"Sending to OpenAI (text): {prompt}")
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "system", "content": PETROVICH_CONTEXT}] + prompt
             )
+        logger.info(f"OpenAI response: {response.choices[0].message.content}")
         return response.choices[0].message.content
     except Exception as e:
-        return f"An error occurred: {str(e)}"
+        error_message = f"Error communicating with OpenAI: {str(e)}"
+        logger.error(error_message)
+        # Do not pass the error to Telegram, return a generic error message
+        return None
 
 # Helper function to check if the bot is mentioned
 async def is_bot_mentioned(message: Message):
@@ -82,16 +93,17 @@ async def handle_message(message: Message):
 
     # Save the message to the history
     image_path = None
+    user_name = message.from_user.full_name or "Пользователь"
     if message.content_type == 'text':
-        chat_histories[chat_id].append({"role": "user", "content": message.text})
+        chat_histories[chat_id].append({"role": "user", "content": f"{user_name}: {message.text}"})
     elif message.content_type == 'photo':
         file_id = message.photo[-1].file_id
         file_info = await bot.get_file(file_id)
         image_path = f"temp_{file_id}.jpg"
         await bot.download_file(file_info.file_path, image_path)
-        chat_histories[chat_id].append({"role": "user", "content": "The user sent an image."})
+        chat_histories[chat_id].append({"role": "user", "content": f"{user_name} отправил изображение."})
     elif message.content_type == 'document':  # Consider documents
-        chat_histories[chat_id].append({"role": "user", "content": "The user sent a file."})
+        chat_histories[chat_id].append({"role": "user", "content": f"{user_name} отправил файл."})
 
     # Check if the bot is directly mentioned or called by a similar name
     is_direct_mention = await is_bot_mentioned(message)
@@ -104,16 +116,22 @@ async def handle_message(message: Message):
         # Form the prompt from the message history
         prompt = list(chat_histories[chat_id])
         if message.content_type == 'text':
-            prompt.append({"role": "user", "content": message.text})
+            prompt.append({"role": "user", "content": f"{user_name}: {message.text}"})
         elif message.content_type == 'photo':
-            prompt.append({"role": "user", "content": "Комментарий к изображению: Пользователь отправил изображение."})
+            prompt.append({"role": "user", "content": f"Комментарий к изображению: {user_name} отправил изображение."})
 
         response = await get_openai_response(prompt, image_path)
-        await message.reply(response)
+        if response:  # Only reply if a valid response is received
+            await message.reply(response)
+        else:
+            await message.reply("Извините, я не могу обработать ваш запрос сейчас.")
 
         # Clean up the temporary image file if it was downloaded
         if image_path:
-            os.remove(image_path)
+            try:
+                os.remove(image_path)
+            except Exception as e:
+                logger.error(f"Error deleting temporary file: {str(e)}")
 
 async def main():
     print("Bot is running!")
