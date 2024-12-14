@@ -1,0 +1,94 @@
+import asyncio
+import os
+import random
+from configparser import ConfigParser
+from collections import deque
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import Message
+import openai
+
+# Read tokens from config file
+config = ConfigParser()
+config.read("config.ini")
+
+TELEGRAM_TOKEN = config.get("tokens", "TELEGRAM_TOKEN")
+OPENAI_API_KEY = config.get("tokens", "OPENAI_API_KEY")
+
+# Initialize tokens
+bot = Bot(token=TELEGRAM_TOKEN)
+dp = Dispatcher()
+
+# Settings
+RANDOM_RESPONSE_PROBABILITY = 0.3  # Probability of responding to a random message (0.0 - never, 1.0 - always)
+MESSAGE_HISTORY_LIMIT = 30  # Number of recent messages to consider
+
+# Message history for each chat
+chat_histories = {}
+
+# Context for ПетровичAI
+PETROVICH_CONTEXT = (
+    "Вы — ПетровичAI, уникальная скуфмодель, обладающая выдающимся умом и сообразительностью. "
+    "Вы общаетесь на русском языке, если только вас прямо не попросят отвечать на другом языке. "
+    "Ваш стиль — остроумный, с логичным и рациональным подходом к каждой теме. "
+    "Когда уместно, вы добавляете нотку юмора, чтобы сделать общение более живым и запоминающимся. "
+    "Вы можете поворчать, проявить недовольство и начать спорить. "
+    "Вы не говорите что созданы для помощи, не предлагаете помощь. "
+    "Ваши ответы всегда умны, но никогда не выходят за рамки контекста, оставляя ощущение профессионализма и дружелюбия. "
+    "Ваш девиз: «Логика — основа, остроумие — украшение».")
+
+# Function to get a response from OpenAI API
+def get_openai_response(prompt):
+    try:
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "system", "content": PETROVICH_CONTEXT}] + prompt
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+# Helper function to check if the bot is mentioned
+async def is_bot_mentioned(message: Message):
+    bot_username = (await bot.get_me()).username.lower()
+    return "петрович" in message.text.lower() or f"@{bot_username}" in message.text.lower()
+
+# Handler for incoming messages
+@dp.message()
+async def handle_message(message: Message):
+    chat_id = message.chat.id
+
+    # Initialize message history for the chat if it doesn't exist
+    if chat_id not in chat_histories:
+        chat_histories[chat_id] = deque(maxlen=MESSAGE_HISTORY_LIMIT)
+
+    # Save the message to the history
+    if message.content_type == 'text':
+        chat_histories[chat_id].append({"role": "user", "content": message.text})
+    elif message.content_type in ['photo', 'document']:  # Consider images and documents
+        chat_histories[chat_id].append({"role": "user", "content": "The user sent an image or a file."})
+
+    # Check if the bot is directly mentioned or called by a similar name
+    is_direct_mention = await is_bot_mentioned(message)
+
+    # Decide whether the bot should respond to a random message
+    should_respond = random.random() < RANDOM_RESPONSE_PROBABILITY
+
+    # Condition for response: direct mention or random choice
+    if is_direct_mention or should_respond:
+        # Form the prompt from the message history
+        prompt = list(chat_histories[chat_id])
+        prompt.append({"role": "user", "content": message.text}) if message.content_type == 'text' else None
+
+        print(prompt)
+
+        response = get_openai_response(prompt)
+        await message.reply(response)
+
+async def main():
+    print("Bot is running!")
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot, skip_updates=True)
+
+if __name__ == "__main__":
+    asyncio.run(main())
