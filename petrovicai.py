@@ -82,28 +82,30 @@ async def is_bot_mentioned(message: Message):
     bot_username = (await bot.get_me()).username.lower()
     return "петрович" in message.text.lower() or f"@{bot_username}" in message.text.lower()
 
+# Update message history by maintaining order and limiting size
+def update_message_history(chat_id, role, content):
+    if chat_id not in chat_histories:
+        chat_histories[chat_id] = deque(maxlen=MESSAGE_HISTORY_LIMIT)
+    chat_histories[chat_id].append({"role": role, "content": content})
+
 # Handler for incoming messages
 @dp.message()
 async def handle_message(message: Message):
     chat_id = message.chat.id
-
-    # Initialize message history for the chat if it doesn't exist
-    if chat_id not in chat_histories:
-        chat_histories[chat_id] = deque(maxlen=MESSAGE_HISTORY_LIMIT)
+    user_name = message.from_user.full_name or "Пользователь"
 
     # Save the message to the history
     image_path = None
-    user_name = message.from_user.full_name or "Пользователь"
     if message.content_type == 'text':
-        chat_histories[chat_id].append({"role": "user", "content": f"{user_name}: {message.text}"})
+        update_message_history(chat_id, "user", f"{user_name}: {message.text}")
     elif message.content_type == 'photo':
         file_id = message.photo[-1].file_id
         file_info = await bot.get_file(file_id)
         image_path = f"temp_{file_id}.jpg"
         await bot.download_file(file_info.file_path, image_path)
-        chat_histories[chat_id].append({"role": "user", "content": f"{user_name} отправил изображение."})
+        update_message_history(chat_id, "user", f"{user_name} отправил изображение.")
     elif message.content_type == 'document':  # Consider documents
-        chat_histories[chat_id].append({"role": "user", "content": f"{user_name} отправил файл."})
+        update_message_history(chat_id, "user", f"{user_name} отправил файл.")
 
     # Check if the bot is directly mentioned or called by a similar name
     is_direct_mention = await is_bot_mentioned(message)
@@ -115,14 +117,10 @@ async def handle_message(message: Message):
     if is_direct_mention or should_respond:
         # Form the prompt from the message history
         prompt = list(chat_histories[chat_id])
-        if message.content_type == 'text':
-            prompt.append({"role": "user", "content": f"{user_name}: {message.text}"})
-        elif message.content_type == 'photo':
-            prompt.append({"role": "user", "content": f"Комментарий к изображению: {user_name} отправил изображение."})
-
         response = await get_openai_response(prompt, image_path)
         if response:  # Only reply if a valid response is received
             await message.reply(response)
+            update_message_history(chat_id, "assistant", response)
         else:
             await message.reply("Извините, я не могу обработать ваш запрос сейчас.")
 
