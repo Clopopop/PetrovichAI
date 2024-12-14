@@ -26,7 +26,7 @@ dp = Dispatcher()
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # Settings
-RANDOM_RESPONSE_PROBABILITY = 1  # Probability of responding to a random message (0.0 - never, 1.0 - always)
+RANDOM_RESPONSE_PROBABILITY = 0.3  # Probability of responding to a random message (0.0 - never, 1.0 - always)
 MESSAGE_HISTORY_LIMIT = 30  # Number of recent messages to consider
 
 # Message history for each chat
@@ -80,7 +80,7 @@ async def is_bot_mentioned(message: Message):
     if message.text is None:
         return False
     bot_username = (await bot.get_me()).username.lower()
-    return "петрович" in message.text.lower() or f"@{bot_username}" in message.text.lower()
+    return any(keyword in message.text.lower() for keyword in ["петрович", "бот", f"@{bot_username}"])
 
 # Update message history by maintaining order and limiting size
 def update_message_history(chat_id, role, content):
