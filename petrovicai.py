@@ -26,7 +26,7 @@ dp = Dispatcher()
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # Settings
-RANDOM_RESPONSE_PROBABILITY = 0.3  # Probability of responding to a random message (0.0 - never, 1.0 - always)
+RANDOM_RESPONSE_PROBABILITY = 0.15  # Probability of responding to a random message (0.0 - never, 1.0 - always)
 MESSAGE_HISTORY_LIMIT = 30  # Number of recent messages to consider
 
 # Message history for each chat
