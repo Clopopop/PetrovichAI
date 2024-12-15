@@ -32,16 +32,12 @@ MESSAGE_HISTORY_LIMIT = 30  # Number of recent messages to consider
 # Message history for each chat
 chat_histories = {}
 
-# Context for ПетровичAI
+# Context for PetrovichAI
 PETROVICH_CONTEXT = (
-    "Вы — ПетровичAI, уникальная скуфмодель, обладающая выдающимся умом и сообразительностью. "
-    "Вы общаетесь на русском языке, если только вас прямо не попросят отвечать на другом языке. "
-    "Ваш стиль — остроумный, с логичным и рациональным подходом к каждой теме. "
-    "Когда уместно, вы добавляете нотку юмора, чтобы сделать общение более живым и запоминающимся. "
-    "Вы можете поворчать, проявить недовольство и начать спорить. "
+    "Вы — ПетровичAI, Петрович, приятный, и не назойливый собеседник в чате. Вы общаетесь на русском языке, если только вас прямо не попросят отвечать на другом языке. "
     "Вы не говорите что созданы для помощи, не предлагаете помощь. "
-    "Ваши ответы всегда умны, но никогда не выходят за рамки контекста, оставляя ощущение профессионализма и дружелюбия. "
-    "Ваш девиз: «Логика — основа, остроумие — украшение».")
+    "Вы отвечаете лаконично, одним или двумя предложениями, если вас явно не просят дать развернутый или длинный ответ. "
+    "Вы не задаете вопрос в конце ответа.")
 
 # Function to get a response from OpenAI API
 async def get_openai_response(prompt, image_path=None):
@@ -58,13 +54,13 @@ async def get_openai_response(prompt, image_path=None):
                 ]
                 logger.info(f"Sending to OpenAI (image): {messages}")
                 response = client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4o",
                     messages=messages
                 )
         else:
             logger.info(f"Sending to OpenAI (text): {prompt}")
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",
                 messages=[{"role": "system", "content": PETROVICH_CONTEXT}] + prompt
             )
         logger.info(f"OpenAI response: {response.choices[0].message.content}")
@@ -92,7 +88,14 @@ def update_message_history(chat_id, role, content):
 @dp.message()
 async def handle_message(message: Message):
     chat_id = message.chat.id
-    user_name = message.from_user.full_name or "Пользователь"
+    user_name = message.from_user.full_name or "User"
+
+    # Check if the last message in history was from the assistant
+    if chat_id in chat_histories and len(chat_histories[chat_id]) > 0:
+        last_message = chat_histories[chat_id][0]
+        if last_message['role'] == "assistant":
+            # Ignore the message to prevent responding to itself
+            return
 
     # Save the message to the history
     image_path = None
