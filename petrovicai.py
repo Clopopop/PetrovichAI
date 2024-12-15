@@ -27,7 +27,7 @@ client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # Settings
 RANDOM_RESPONSE_PROBABILITY = 0.15  # Probability of responding to a random message (0.0 - never, 1.0 - always)
-MESSAGE_HISTORY_LIMIT = 30  # Number of recent messages to consider
+MESSAGE_HISTORY_LIMIT = 20  # Number of recent messages to consider
 
 # Message history for each chat
 chat_histories = {}
@@ -73,10 +73,11 @@ async def get_openai_response(prompt, image_path=None):
 
 # Helper function to check if the bot is mentioned
 async def is_bot_mentioned(message: Message):
-    if message.text is None:
+    if message.text is None and message.caption is None:
         return False
     bot_username = (await bot.get_me()).username.lower()
-    return any(keyword in message.text.lower() for keyword in ["петрович", "бот", f"@{bot_username}"])
+    message_content = message.text or message.caption
+    return any(keyword in message_content.lower() for keyword in ["петрович", "бот", f"@{bot_username}"])
 
 # Update message history by maintaining order and limiting size
 def update_message_history(chat_id, role, content):
@@ -106,12 +107,14 @@ async def handle_message(message: Message):
         file_info = await bot.get_file(file_id)
         image_path = f"temp_{file_id}.jpg"
         await bot.download_file(file_info.file_path, image_path)
-        update_message_history(chat_id, "user", f"{user_name} отправил изображение.")
+        update_message_history(chat_id, "user", f"{user_name} sent an image.")
+        # Check if the bot is directly mentioned in the caption
+        is_direct_mention = await is_bot_mentioned(message)
     elif message.content_type == 'document':  # Consider documents
-        update_message_history(chat_id, "user", f"{user_name} отправил файл.")
+        update_message_history(chat_id, "user", f"{user_name} sent a file.")
 
     # Check if the bot is directly mentioned or called by a similar name
-    is_direct_mention = await is_bot_mentioned(message)
+    is_direct_mention = is_direct_mention or await is_bot_mentioned(message)
 
     # Decide whether the bot should respond to a random message
     should_respond = random.random() < RANDOM_RESPONSE_PROBABILITY
