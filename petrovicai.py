@@ -100,6 +100,8 @@ async def handle_message(message: Message):
 
     # Save the message to the history
     image_path = None
+    is_direct_mention = None
+    
     if message.content_type == 'text':
         update_message_history(chat_id, "user", f"{user_name}: {message.text}")
     elif message.content_type == 'photo':
