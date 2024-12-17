@@ -91,17 +91,9 @@ async def handle_message(message: Message):
     chat_id = message.chat.id
     user_name = message.from_user.full_name or "User"
 
-    # Check if the last message in history was from the assistant
-    if chat_id in chat_histories and len(chat_histories[chat_id]) > 0:
-        last_message = chat_histories[chat_id][0]
-        if last_message['role'] == "assistant":
-            # Ignore the message to prevent responding to itself
-            return
-
     # Save the message to the history
     image_path = None
-    is_direct_mention = None
-    
+
     if message.content_type == 'text':
         update_message_history(chat_id, "user", f"{user_name}: {message.text}")
     elif message.content_type == 'photo':
@@ -110,19 +102,23 @@ async def handle_message(message: Message):
         image_path = f"temp_{file_id}.jpg"
         await bot.download_file(file_info.file_path, image_path)
         update_message_history(chat_id, "user", f"{user_name} sent an image.")
-        # Check if the bot is directly mentioned in the caption
-        is_direct_mention = await is_bot_mentioned(message)
     elif message.content_type == 'document':  # Consider documents
         update_message_history(chat_id, "user", f"{user_name} sent a file.")
 
-    # Check if the bot is directly mentioned or called by a similar name
-    is_direct_mention = is_direct_mention or await is_bot_mentioned(message)
 
-    # Decide whether the bot should respond to a random message
-    should_respond = random.random() < RANDOM_RESPONSE_PROBABILITY
+    # Check if the last message in history was from the assistant
+    if chat_id in chat_histories and len(chat_histories[chat_id]) > 0:
+
+        last_message = chat_histories[chat_id][-1]
+        if last_message['role'] == "assistant":
+            # Ignore the message to prevent responding to itself
+            return
+
+    # Decide whether the bot should respond to a direct call or a random message
+    should_respond = await is_bot_mentioned(message) or random.random() < RANDOM_RESPONSE_PROBABILITY
 
     # Condition for response: direct mention or random choice
-    if is_direct_mention or should_respond:
+    if should_respond:
         # Form the prompt from the message history
         prompt = list(chat_histories[chat_id])
         response = await get_openai_response(prompt, image_path)
