@@ -16,18 +16,18 @@ logger = logging.getLogger()
 # Read tokens from config file
 config = ConfigParser()
 config.read("config.ini")
-
 TELEGRAM_TOKEN = config.get("tokens", "TELEGRAM_TOKEN")
 OPENAI_API_KEY = config.get("tokens", "OPENAI_API_KEY")
+
+# Probability of responding to a random message (0.0 - never, 1.0 - always)
+RANDOM_RESPONSE_PROBABILITY = config.getfloat("settings", "RANDOM_RESPONSE_PROBABILITY")
+# Number of recent messages to consider for the prompt
+MESSAGE_HISTORY_LIMIT = config.getint("settings", "MESSAGE_HISTORY_LIMIT")
 
 # Initialize tokens
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
-
-# Settings
-RANDOM_RESPONSE_PROBABILITY = 0.08  # Probability of responding to a random message (0.0 - never, 1.0 - always)
-MESSAGE_HISTORY_LIMIT = 20  # Number of recent messages to consider
 
 # Message history for each chat
 chat_histories = {}

@@ -1,3 +1,7 @@
 [tokens]
 TELEGRAM_TOKEN = your telegram token
 OPENAI_API_KEY = your open ai key
+
+[settings]
+RANDOM_RESPONSE_PROBABILITY = 0.08
+MESSAGE_HISTORY_LIMIT = 15
