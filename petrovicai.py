@@ -33,7 +33,7 @@ client = openai.OpenAI(api_key=OPENAI_API_KEY)
 chat_histories = {}
 
 # Context for PetrovichAI
-PETROVICH_CONTEXT = (
+SYSTEM_PROMPT = (
     "Вы — ПетровичAI, Петрович, приятный, и не назойливый собеседник в чате. Вы общаетесь на русском языке, если только вас прямо не попросят отвечать на другом языке. "
     "Вы не говорите что созданы для помощи, не предлагаете помощь. "
     "Вы отвечаете лаконично, одним или двумя предложениями, если вас явно не просят дать развернутый или длинный ответ. "
@@ -46,7 +46,7 @@ async def get_openai_response(prompt, image_path=None):
             with open(image_path, "rb") as image_file:
                 image_data = base64.b64encode(image_file.read()).decode()
                 messages = [
-                    {"role": "system", "content": PETROVICH_CONTEXT},
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": [ 
                       {"type": "text", "text": "Прокомментируй изображение."},
                       {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
@@ -61,7 +61,7 @@ async def get_openai_response(prompt, image_path=None):
             logger.info(f"Sending to OpenAI (text): {prompt}")
             response = client.chat.completions.create(
                 model="gpt-4o",
-                messages=[{"role": "system", "content": PETROVICH_CONTEXT}] + prompt
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + prompt
             )
         logger.info(f"OpenAI response: {response.choices[0].message.content}")
         return response.choices[0].message.content
