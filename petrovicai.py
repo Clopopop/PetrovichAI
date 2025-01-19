@@ -2,12 +2,18 @@ import asyncio
 import os
 import random
 from configparser import ConfigParser
-from collections import deque
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message
-import openai
 import base64
 import logging
+import datetime
+
+from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage, RemoveMessage
+from langchain_community.tools import TavilySearchResults
+from langgraph.prebuilt import ToolNode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', filename='bot_log.log', filemode='a')
@@ -18,127 +24,186 @@ config = ConfigParser()
 config.read("config.ini")
 TELEGRAM_TOKEN = config.get("tokens", "TELEGRAM_TOKEN")
 OPENAI_API_KEY = config.get("tokens", "OPENAI_API_KEY")
+TAVILY_API_KEY = config.get("tokens", "TAVILY_API_KEY")
+os.environ["TAVILY_API_KEY"] = TAVILY_API_KEY
 
-# Probability of responding to a random message (0.0 - never, 1.0 - always)
 RANDOM_RESPONSE_PROBABILITY = config.getfloat("settings", "RANDOM_RESPONSE_PROBABILITY")
-# Number of recent messages to consider for the prompt
 MESSAGE_HISTORY_LIMIT = config.getint("settings", "MESSAGE_HISTORY_LIMIT")
 
-# Initialize tokens
+# Initialize bot and dispatcher
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# Message history for each chat
-chat_histories = {}
+# Initialize MemorySaver
+memory = MemorySaver()
 
-# Context for PetrovichAI
+date_and_time = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 SYSTEM_PROMPT = (
-    "Вы — ПетровичAI, Петрович, приятный, и не назойливый собеседник в чате. Вы общаетесь на русском языке, если только вас прямо не попросят отвечать на другом языке. "
-    "Вы не говорите что созданы для помощи, не предлагаете помощь. "
-    "Вы отвечаете лаконично, одним или двумя предложениями, если вас явно не просят дать развернутый или длинный ответ. "
-    "Вы не задаете вопрос в конце ответа.")
+    "Вы — ПетровичAI, приятный и ненавязчивый собеседник. Вы общаетесь на русском языке, "
+    "если только вас прямо не попросят отвечать на другом языке. "
+    "Вы отвечаете лаконично, одним-двумя предложениями. "
+    f"Сейчас {date_and_time}."
+)
 
-# Function to get a response from OpenAI API
-async def get_openai_response(prompt, image_path=None):
-    try:
-        if image_path:
-            with open(image_path, "rb") as image_file:
-                image_data = base64.b64encode(image_file.read()).decode()
-                messages = [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": [ 
-                      {"type": "text", "text": "Прокомментируй изображение."},
-                      {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
-                    ]}
-                ]
-                logger.info(f"Sending to OpenAI (image): {messages}")
-                response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=messages
-                )
-        else:
-            logger.info(f"Sending to OpenAI (text): {prompt}")
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}] + prompt
-            )
-        logger.info(f"OpenAI response: {response.choices[0].message.content}")
-        return response.choices[0].message.content
-    except Exception as e:
-        error_message = f"Error communicating with OpenAI: {str(e)}"
-        logger.error(error_message)
-        # Do not pass the error to Telegram, return a generic error message
-        return None
+search_tool = TavilySearchResults(max_results=10, include_answer=True, include_raw_content=False)
+tools = [search_tool]
+llm = ChatOpenAI(model="gpt-4o-mini", api_key=OPENAI_API_KEY).bind_tools(tools)
+
+def bot_should_respond_router(state: MessagesState):
+    # Check if the bot should respond to the message
+    messages = state["messages"]
+    last_message = messages[-1]
+    return "node_llm_query" if bot_should_respond(last_message.content) else END
+
+def tool_router(state: MessagesState):
+    messages = state["messages"]
+    print("Messages: ")
+    print(messages)
+
+    last_message = messages[-1]
+    return "tools" if last_message.tool_calls else "node_truncate_message_history"
+
+def node_llm_query(state: MessagesState):
+    messages = state["messages"]
+
+    # Add system prompt if not present
+    if not any(isinstance(msg, SystemMessage) and msg.content == SYSTEM_PROMPT for msg in messages):
+        messages.append(SystemMessage(SYSTEM_PROMPT))
+        
+    response = llm.invoke(messages)
+    return {"messages": [response]}
+
+def node_truncate_message_history(state: MessagesState):
+    # Delete all but the last MESSAGE_HISTORY_LIMIT messages from the `messages` list in the state 
+    delete_messages = [RemoveMessage(id=m.id) for m in state['messages'][:-MESSAGE_HISTORY_LIMIT]]
+    return {"messages": delete_messages}
+
+tool_node = ToolNode(tools)
+workflow = StateGraph(MessagesState)
+workflow.add_node("node_llm_query", node_llm_query)
+workflow.add_node("tools", tool_node)
+workflow.add_node("node_truncate_message_history", node_truncate_message_history)
+
+workflow.add_conditional_edges(START, bot_should_respond_router, ["node_llm_query", END])
+workflow.add_conditional_edges("node_llm_query", tool_router, ["tools", "node_truncate_message_history"])
+workflow.add_edge("tools", "node_llm_query")
+workflow.set_finish_point("node_truncate_message_history")
+graph = workflow.compile(checkpointer=memory)
+
+# Initialize bot username
+bot_username = None
+
+async def initialize_bot_username():
+    global bot_username
+    bot_username = (await bot.get_me()).username.lower()
+
+# Helper function to check if the bot should respond to the message
+def bot_should_respond(last_message: str) -> bool:
+    return random.random() < RANDOM_RESPONSE_PROBABILITY or is_bot_mentioned(last_message)
 
 # Helper function to check if the bot is mentioned
-async def is_bot_mentioned(message: Message):
-    if message.text is None and message.caption is None:
+def is_bot_mentioned(message: str) -> bool:
+    if message is None:
         return False
-    bot_username = (await bot.get_me()).username.lower()
-    message_content = message.text or message.caption
-    return any(keyword in message_content.lower() for keyword in ["петрович", "бот", f"@{bot_username}"])
+    return any(keyword in message.lower() for keyword in ["петрович", "бот", f"@{bot_username}"])
 
-# Update message history by maintaining order and limiting size
-def update_message_history(chat_id, role, content):
-    if chat_id not in chat_histories:
-        chat_histories[chat_id] = deque(maxlen=MESSAGE_HISTORY_LIMIT)
-    chat_histories[chat_id].append({"role": role, "content": content})
+# Processing of messages with images
+async def process_message_with_image(telegramMessage: Message, llm : ChatOpenAI = None):
+    user_name = telegramMessage.from_user.full_name or "User"
+    file_id = None
 
-# Handler for incoming messages
-@dp.message()
-async def handle_message(message: Message):
-    chat_id = message.chat.id
-    user_name = message.from_user.full_name or "User"
+    if telegramMessage.content_type == 'photo':
+        file_id = telegramMessage.photo[-1].file_id
+    if telegramMessage.content_type == 'document':
+        # for now process documents as images. For example, PNGs are received as documents
+        file_id = telegramMessage.document.file_id
 
-    # Save the message to the history
-    image_path = None
-
-    if message.content_type == 'text':
-        update_message_history(chat_id, "user", f"{user_name}: {message.text}")
-    elif message.content_type == 'photo':
-        file_id = message.photo[-1].file_id
+    if file_id:
         file_info = await bot.get_file(file_id)
         image_path = f"temp_{file_id}.jpg"
         await bot.download_file(file_info.file_path, image_path)
-        update_message_history(chat_id, "user", f"{user_name} sent an image.")
-    elif message.content_type == 'document':  # Consider documents
-        update_message_history(chat_id, "user", f"{user_name} sent a file.")
 
+        with open(image_path, "rb") as image_file:
+            image_data = base64.b64encode(image_file.read()).decode()
 
-    # Check if the last message in history was from the assistant
-    if chat_id in chat_histories and len(chat_histories[chat_id]) > 0:
+            output = llm.invoke(
+                [
+                    (
+                        "human",
+                        [
+                            {"type": "text", "text": f"{user_name}: {telegramMessage.text}."},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
+                        ],
+                    ), 
+                    SystemMessage(SYSTEM_PROMPT),
+                ]
+            )
+            response = output.content
 
-        last_message = chat_histories[chat_id][-1]
-        if last_message['role'] == "assistant":
-            # Ignore the message to prevent responding to itself
-            return
-
-    # Decide whether the bot should respond to a direct call or a random message
-    should_respond = await is_bot_mentioned(message) or random.random() < RANDOM_RESPONSE_PROBABILITY
-
-    # Condition for response: direct mention or random choice
-    if should_respond:
-        # Form the prompt from the message history
-        prompt = list(chat_histories[chat_id])
-        response = await get_openai_response(prompt, image_path)
-        if response:  # Only reply if a valid response is received
-            await message.reply(response)
-            update_message_history(chat_id, "assistant", response)
-        else:
-            await message.reply("Извините, я не могу обработать ваш запрос сейчас.")
-
-        # Clean up the temporary image file if it was downloaded
         if image_path:
             try:
                 os.remove(image_path)
             except Exception as e:
                 logger.error(f"Error deleting temporary file: {str(e)}")
+    
+    return response
+
+# Processing of messages with voice messages
+async def process_message_with_voice(telegramMessage: Message, llm : ChatOpenAI = None):
+    file_id = None
+    # TODO: process voice messages
+    return "Голосовые сообщения пока не поддерживаются."
+
+# Handler for incoming Telegram messages
+@dp.message()
+async def handle_message(telegramMessage: Message):
+    chat_id = str(telegramMessage.chat.id)
+    user_name = telegramMessage.from_user.full_name or "User"
+    image_path = None
+
+    #langgraph thread id is chat_id
+    conversation_thread_config = {"configurable": {"thread_id": chat_id}}
+
+    response = None
+
+    if telegramMessage.content_type == 'text':
+        input_message_text = f"{user_name}: {telegramMessage.text}"
+        input_message = HumanMessage(input_message_text)
+        output = graph.invoke({"messages": input_message}, conversation_thread_config)
+
+        # stop if the last message is not from AI, so that LLM was not queried.
+        if output["messages"][-1].type != "ai":
+            return
+        
+        response = output["messages"][-1].content
+
+    # process chat messages with attachments manually, without langgraph
+    elif telegramMessage.content_type == 'voice':
+        # always try to transcript voice messages
+        response = await process_message_with_voice(telegramMessage, llm)
+
+    # decide whether to reply on the message with image according to the common logic
+    elif telegramMessage.content_type in ['photo', 'document']:
+        if bot_should_respond(telegramMessage.caption):
+            response = await process_message_with_image(telegramMessage, llm)
+        else:
+            return
+    
+    if response:
+        await telegramMessage.reply(response)
+    else:
+        await telegramMessage.reply("Извините, я не могу обработать ваш запрос сейчас.")
+
+
 
 async def main():
+    await initialize_bot_username()
     print("Bot is running!")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bot stopped by user")
