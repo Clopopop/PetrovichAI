@@ -35,7 +35,6 @@ class ConfigManager:
 
         self.MAIN_WORKFLOW_MODEL = self._config.get("models", "MAIN_WORKFLOW_MODEL")
         self.SHOULD_RESPOND_MODEL = self._config.get("models", "SHOULD_RESPOND_MODEL")
-        self.VOICE_TRANSCTIPTION_MODEL = self._config.get("models", "VOICE_TRANSCTIPTION_MODEL")
 
 
 # Create a single shared instance for the entire application

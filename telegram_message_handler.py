@@ -10,6 +10,9 @@ from langchain_core.messages import HumanMessage
 from logger_setup import logger
 from workflow_controller import WorkflowController
 
+from config import CONFIG
+from transcriber import AudioTranscriber
+
 
 class TelegramMessageHandler:
     """
@@ -47,7 +50,20 @@ class TelegramMessageHandler:
 
         # --- Handle voice messages ---
         elif telegram_message.content_type == "voice":
-            response = await self._handle_voice_message(telegram_message, user_name)
+            transcription = await self._handle_voice_message(telegram_message, bot)
+
+            # insert the transcription into the workflow and generate a response if applicable
+            if transcription:
+                # post the transcription as a text message to the chat
+                await telegram_message.reply(transcription)
+
+                # process the transcription as a text message to store it in the workflow and generate a response
+                input_message_text = f"Голосовое сообщение от {telegram_message.from_user.full_name}: {transcription}"
+                output = self._handle_text_message(input_message_text, conversation_thread_config)
+                if output and output["messages"][-1].type == "ai":
+                    response = output["messages"][-1].content
+                else:
+                    return
 
         # --- Handle photos or documents ---
         elif telegram_message.content_type in ["photo", "document"]:
@@ -78,12 +94,38 @@ class TelegramMessageHandler:
         )
         return output
 
-    async def _handle_voice_message(self, telegram_message: Message, user_name: str) -> str:
+    async def _handle_voice_message(self, telegram_message: Message, bot) -> str:
         """
-        Processes voice messages (currently not implemented).
+        Transcribe voice messages.
         """
-        logger.info(f"_handle_voice_message: Voice message received from {user_name}, not supported yet.")
-        return "Голосовые сообщения пока не поддерживаются."
+        if telegram_message.content_type != "voice":
+            logger.error("_handle_voice_message: Invalid content type.")
+            return None
+        
+        file_id = telegram_message.voice.file_id
+
+        if not file_id:
+            logger.error("_handle_voice_message: Unable to get file_id.")
+            return None
+        
+        file_info = await bot.get_file(file_id)
+        voice_path = f"temp_{file_id}.ogg"
+
+        await bot.download_file(file_info.file_path, voice_path)
+        logger.info(f"_handle_voice_message: File downloaded to {voice_path}")
+
+        transcriber = AudioTranscriber(CONFIG.OPENAI_API_KEY)
+        transcription = transcriber.transcribe(voice_path)
+        logger.info(f"_handle_voice_message: Transcription: {transcription}")
+
+        # Remove the temporary file
+        try:
+            os.remove(voice_path)
+            logger.info(f"_handle_voice_message: Removed temporary file {voice_path}")
+        except Exception as e:
+            logger.error(f"Error removing temporary file {voice_path}: {str(e)}")
+
+        return transcription
 
     async def _handle_image_or_document_message(self, telegram_message: Message, user_name: str, bot) -> str:
         """
