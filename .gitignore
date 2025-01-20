@@ -2,3 +2,4 @@
 config.ini
 __pycache__/
 .venv/
+main_workflow_memory.sqlite

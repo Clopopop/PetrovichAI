@@ -5,9 +5,10 @@ and provides a method to run (invoke) the flow with incoming messages.
 
 import datetime
 import random
+import sqlite3
 
 from langgraph.graph import StateGraph, START, END, MessagesState
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, RemoveMessage, ToolMessage, AIMessage
 from langchain_community.tools import TavilySearchResults
@@ -24,7 +25,8 @@ class WorkflowController:
 
     def __init__(self, config: ConfigManager):
         self.config = config
-        self.memory = MemorySaver()
+        conn = sqlite3.connect("main_workflow_memory.sqlite", check_same_thread=False)
+        self.memory = SqliteSaver(conn)
 
         # Prepare the system prompt with current date and time
         date_and_time = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
