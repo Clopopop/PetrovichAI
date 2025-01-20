@@ -9,7 +9,7 @@ import random
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, RemoveMessage
+from langchain_core.messages import SystemMessage, RemoveMessage, ToolMessage, AIMessage
 from langchain_community.tools import TavilySearchResults
 from langgraph.prebuilt import ToolNode
 
@@ -32,7 +32,25 @@ class WorkflowController:
             "Вы — ПетровичAI, приятный и ненавязчивый собеседник. Вы общаетесь на русском языке, "
             "если только вас прямо не попросят отвечать на другом языке. "
             "Вы отвечаете лаконично, одним-двумя предложениями. "
+            "Используйте инструмент TavilySearchResults для поиска информации в интернете. "
             f"Сейчас {date_and_time}."
+        )
+
+        self.SYSTEM_PROMPT_SHOULD_RESPOND = self.SYSTEM_PROMPT + (
+            "Ответом на это сообщение является оценка вероятности того, что ПетровичAI вовлечен в диалог "
+            "и от него ожидается ответ, несмотря на то что его имя может быть не упомянуто в сообщении. "
+            "Дай ответ в формате одного вещественного числа, с точностью 2 знака после запятой (например 0.52). "
+            "Ответ должен быть в диапазоне от 0.0 до 0.99. "
+            "Если ты считаешь, что ПетровичAI не должен отвечать на это сообщение, введи 0.0. "
+            "Если ты считаешь, что ПетровичAI должен отвечать на это сообщение, введи 0.99. "
+            "Отвечай только в этом формате и не вводи никаких других символов. "
+            "Возможные причины, по которым ПетровичAI может решить отвечать на сообщение, включают в себя, "
+            "но не ограничиваются: "
+            "Сообщение содержит упоминание бота или его имени; "
+            "Сообщение задаёт вопрос, на который бот знает ответ или может нагуглить; "
+            "Сообщение связано с контекстом предыдущего диалога, где бот участвовал; "
+            "Явная необходимость ответа по смыслу или обращению. "
+            "Далее приведена история сообщений."
         )
 
         # Initialize tools and LLM
@@ -43,10 +61,15 @@ class WorkflowController:
         )
         tools = [search_tool]
 
-        self.llm = ChatOpenAI(
+        self.llmMain = ChatOpenAI(
             model=self.config.MAIN_WORKFLOW_MODEL,
             api_key=self.config.OPENAI_API_KEY
         ).bind_tools(tools)
+
+        self.llmShouldReply = ChatOpenAI(
+            model=self.config.SHOULD_RESPOND_MODEL,
+            api_key=self.config.OPENAI_API_KEY
+        )
 
         # Build the graph
         self.graph = self._build_graph(tools)
@@ -65,7 +88,7 @@ class WorkflowController:
         workflow.add_node("node_truncate_message_history", self._node_truncate_message_history)
 
         # Define edges
-        workflow.add_conditional_edges(START, self._bot_should_respond_router, ["node_llm_query", END])
+        workflow.add_conditional_edges(START, self._bot_should_respond_router, ["node_llm_query", "node_truncate_message_history"])
         workflow.add_conditional_edges("node_llm_query", self._tool_router, ["tools", "node_truncate_message_history"])
         workflow.add_edge("tools", "node_llm_query")
 
@@ -80,10 +103,10 @@ class WorkflowController:
         from petrovichai import BOT_USERNAME
         last_message = state["messages"][-1]
 
-        should_respond = self._bot_should_respond(last_message.content, BOT_USERNAME)
+        should_respond = self._bot_should_respond(state, BOT_USERNAME)
 
         logger.info(f"_bot_should_respond_router: last_message='{last_message.content}', respond={should_respond}")
-        return "node_llm_query" if should_respond else END
+        return "node_llm_query" if should_respond else "node_truncate_message_history"
 
     def _tool_router(self, state: MessagesState) -> str:
         """
@@ -107,7 +130,7 @@ class WorkflowController:
         if not any(isinstance(msg, SystemMessage) and msg.content == self.SYSTEM_PROMPT for msg in messages):
             messages.append(SystemMessage(self.SYSTEM_PROMPT))
 
-        response = self.llm.invoke(messages)
+        response = self.llmMain.invoke(messages)
         logger.info(f"_node_llm_query: LLM response: '{response.content}'")
         return {"messages": [response]}
 
@@ -115,14 +138,22 @@ class WorkflowController:
         """
         Keeps only the last MESSAGE_HISTORY_LIMIT messages.
         """
-        msgs_to_keep = self.config.MESSAGE_HISTORY_LIMIT
-        current_len = len(state["messages"])
-        delete_messages = [RemoveMessage(id=m.id) for m in state["messages"][:-msgs_to_keep]]
 
-        logger.info(
-            f"_node_truncate_message_history: Current total messages={current_len}, "
-            f"truncating to {msgs_to_keep}."
-        )
+        # delete all tool and system messages from the state
+        delete_tool_messages = [RemoveMessage(id=m.id) for m in state["messages"] if isinstance(m, ToolMessage)]
+        delete_system_messages = [RemoveMessage(id=m.id) for m in state["messages"] if isinstance(m, SystemMessage)]
+        
+        #delete assistant messages with tool calls
+        delete_toolcalls_messages = [RemoveMessage(id=m.id) for m in state["messages"] if isinstance(m, AIMessage) and m.tool_calls]
+
+        #length of removed messages
+        removed_len = len(delete_tool_messages) + len(delete_system_messages) + len(delete_toolcalls_messages)
+
+        msgs_to_keep = self.config.MESSAGE_HISTORY_LIMIT + removed_len
+        truncate_messages = [RemoveMessage(id=m.id) for m in state["messages"][:-msgs_to_keep] if isinstance(m, SystemMessage) and not isinstance(m, ToolMessage) and not isinstance(m, AIMessage)]
+
+        delete_messages = delete_tool_messages + delete_system_messages + delete_toolcalls_messages + truncate_messages
+
         return {"messages": delete_messages}
 
     def _is_bot_mentioned(self, message: str, bot_username: str) -> bool:
@@ -136,11 +167,41 @@ class WorkflowController:
             keyword in lower_text
             for keyword in ["петрович", "бот", "bot", f"@{bot_username}"]
         )
-    def _bot_should_respond(self, message: str, bot_username: str) -> bool:
+    def _bot_should_respond(self, state: MessagesState, bot_username: str) -> bool:
         """
         Checks if the bot should respond to the message.
         """
-        return random.random() < self.config.RANDOM_RESPONSE_PROBABILITY or self._is_bot_mentioned(message, bot_username)
+
+        HISTORY_LENGTH_TO_ANALYZE = 6
+
+        last_message = state["messages"][-1].content
+
+        # First make simple checks like random probability and bot mention
+        if random.random() < self.config.RANDOM_RESPONSE_PROBABILITY or self._is_bot_mentioned(last_message, bot_username):
+            return True
+        
+        # Check if the LLM thinks the bot should respond
+        message_history = state["messages"][-HISTORY_LENGTH_TO_ANALYZE:]
+        
+        # Remove system messages from the history
+        messages = [msg for msg in message_history if not isinstance(msg, SystemMessage)]
+
+        # Add specific system prompt to analyse if LLM should respond on the last message
+        messages = [SystemMessage(self.SYSTEM_PROMPT_SHOULD_RESPOND)] + messages
+
+        #invoke LLM. Answer should be a float.
+        response = self.llmShouldReply.invoke(messages)
+
+        #translate response to float
+        try:
+            reply_probability = float(response.content)
+        except ValueError:
+            logger.error(f"Invalid response from LLM: {response.content}")
+            return False
+
+        logger.info(f"_bot_should_respond: LLM response: {reply_probability}, while threshold is {self.config.LLM_DECISSION_TO_RESPOND_THRESHOLD}")
+        return reply_probability > self.config.LLM_DECISSION_TO_RESPOND_THRESHOLD
+
     
     def bot_should_respond(self, message: str) -> bool:
         """

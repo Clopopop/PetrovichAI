@@ -110,7 +110,7 @@ class TelegramMessageHandler:
         response_text = None
         with open(image_path, "rb") as f:
             image_data = base64.b64encode(f.read()).decode()
-            output = self.workflow_controller.llm.invoke(
+            output = self.workflow_controller.llmMain.invoke(
                 [
                     (
                         "human",
