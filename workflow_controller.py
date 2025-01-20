@@ -190,7 +190,8 @@ class WorkflowController:
         messages = [msg for msg in message_history if not isinstance(msg, SystemMessage)]
 
         # Add specific system prompt to analyse if LLM should respond on the last message
-        messages = [SystemMessage(self.SYSTEM_PROMPT_SHOULD_RESPOND)] + messages
+        # adding it twice make the results better \_(o.o)_/
+        messages = [SystemMessage(self.SYSTEM_PROMPT_SHOULD_RESPOND)] + messages + [SystemMessage(self.SYSTEM_PROMPT_SHOULD_RESPOND)]
 
         #invoke LLM. Answer should be a float.
         response = self.llmShouldReply.invoke(messages)
