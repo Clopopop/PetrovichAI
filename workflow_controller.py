@@ -10,7 +10,7 @@ import sqlite3
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage, RemoveMessage, ToolMessage, AIMessage
+from langchain_core.messages import SystemMessage, RemoveMessage, ToolMessage, AIMessage, HumanMessage
 from langchain_community.tools import TavilySearchResults
 from langgraph.prebuilt import ToolNode
 
@@ -172,6 +172,7 @@ class WorkflowController:
             keyword in lower_text
             for keyword in ["петрович", "бот", "bot", f"@{bot_username}"]
         )
+    
     def _bot_should_respond(self, state: MessagesState, bot_username: str) -> bool:
         """
         Checks if the bot should respond to the message.
@@ -214,7 +215,10 @@ class WorkflowController:
         Public method to check if the bot should respond to the message.
         """
         from petrovichai import BOT_USERNAME
-        return self._bot_should_respond(message, BOT_USERNAME)
+
+        # convert the string message into a state for further processing
+        messages_state = MessagesState(messages=[HumanMessage(content=message)])
+        return self._bot_should_respond(messages_state, BOT_USERNAME)        
     
     def invoke_flow(self, messages_dict: dict, thread_config: dict) -> dict:
         """

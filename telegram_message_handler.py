@@ -69,7 +69,7 @@ class TelegramMessageHandler:
         elif telegram_message.content_type in ["photo", "document"]:
             # decide whether to reply on the message with image according to the common logic
             if not self.workflow_controller.bot_should_respond(telegram_message.caption):
-                logger.info("_handle_image_or_document_message: Bot not mentioned in caption.")
+                logger.info("_handle_image_or_document_message: Bot should not respond.")
                 return 
 
             response = await self._handle_image_or_document_message(telegram_message, user_name, bot)
