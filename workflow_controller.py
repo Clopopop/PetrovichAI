@@ -57,7 +57,7 @@ class WorkflowController:
 
         # Initialize tools and LLM
         search_tool = TavilySearchResults(
-            max_results=10,
+            max_results=3,
             include_answer=True,
             include_raw_content=False
         )
