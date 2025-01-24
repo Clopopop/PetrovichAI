@@ -216,6 +216,10 @@ class WorkflowController:
         """
         from petrovichai import BOT_USERNAME
 
+        if not message:
+            logger.error("bot_should_respond: Empty message.")
+            return False
+
         # convert the string message into a state for further processing
         messages_state = MessagesState(messages=[HumanMessage(content=message)])
         return self._bot_should_respond(messages_state, BOT_USERNAME)        
