@@ -79,8 +79,8 @@ class TelegramMessageHandler:
             logger.info(f"route_incoming_message: Sending response to user: {response[:70]}...")
             await telegram_message.reply(response)
         else:
-            logger.info("route_incoming_message: No response formed. Sending apology message.")
-            await telegram_message.reply("Извините, я не могу обработать ваш запрос сейчас.")
+            logger.info("route_incoming_message: No response formed.")
+#            await telegram_message.reply("Извините, я не могу обработать ваш запрос сейчас.")
 
     def _handle_text_message(self, input_text: str, conversation_thread_config: dict) -> dict:
         """
