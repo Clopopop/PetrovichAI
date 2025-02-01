@@ -34,6 +34,8 @@ class WorkflowController:
             "Вы — ПетровичAI, приятный и ненавязчивый собеседник. Вы общаетесь на русском языке, "
             "если только вас прямо не попросят отвечать на другом языке. "
             "Вы отвечаете лаконично, одним-двумя предложениями. "
+            "Вместе с этим системным сообщением вам передаются последние сообщения из диалога."
+            "Среди них есть транскрипции голосовых сообщений, которые вы можете использовать для ответа. "
             "Используйте инструмент TavilySearchResults для поиска информации в интернете. "
             f"Сейчас {date_and_time}."
         )
@@ -184,6 +186,16 @@ class WorkflowController:
         HISTORY_LENGTH_TO_ANALYZE = 6
 
         last_message = state["messages"][-1].content
+
+        # Check if the last message is empty
+        if not last_message:
+            logger.error("_bot_should_respond: Empty message.")
+            return False
+        
+        # Check if the conversation handling logic requested not to answer, eg it is a video transcription
+        if isinstance(state["messages"][-1], HumanMessage) and state["messages"][-1].additional_kwargs.get("no_answer", False):
+            logger.info("_bot_should_respond: No answer requested.")
+            return False
 
         # First make simple checks like random probability and bot mention
         if random.random() < self.config.RANDOM_RESPONSE_PROBABILITY or self._is_bot_mentioned(last_message, bot_username):

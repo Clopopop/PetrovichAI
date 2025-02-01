@@ -11,7 +11,11 @@ from logger_setup import logger
 from workflow_controller import WorkflowController
 
 from config import CONFIG
-from transcriber import AudioTranscriber
+from transcriber import Transcriber
+
+
+# Maximum video file size in bytes
+MAX_VIDEO_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
 class TelegramMessageHandler:
@@ -22,6 +26,8 @@ class TelegramMessageHandler:
 
     def __init__(self, workflow_controller: WorkflowController):
         self.workflow_controller = workflow_controller
+        self.transcriber = Transcriber(CONFIG.OPENAI_API_KEY)
+
 
     async def route_incoming_message(self, telegram_message: Message, bot):
         """
@@ -64,6 +70,13 @@ class TelegramMessageHandler:
                     response = output["messages"][-1].content
                 else:
                     return
+
+        # --- Handle video messages by transcribing the text ---
+        elif telegram_message.content_type == "video":
+            await self._handle_video_message(telegram_message, bot, conversation_thread_config)
+
+            # no response are generated for video messages, the transcption is only stored in the workflow
+            return
 
         # --- Handle photos or documents ---
         elif telegram_message.content_type in ["photo", "document"]:
@@ -114,8 +127,7 @@ class TelegramMessageHandler:
         await bot.download_file(file_info.file_path, voice_path)
         logger.info(f"_handle_voice_message: File downloaded to {voice_path}")
 
-        transcriber = AudioTranscriber(CONFIG.OPENAI_API_KEY)
-        transcription = transcriber.transcribe(voice_path)
+        transcription = self.transcriber.transcribe(voice_path)
         logger.info(f"_handle_voice_message: Transcription: {transcription}")
 
         # Remove the temporary file
@@ -174,3 +186,51 @@ class TelegramMessageHandler:
             logger.error(f"Error removing temporary file {image_path}: {str(e)}")
 
         return response_text
+
+    async def _handle_video_message(self, telegram_message: Message, bot, conversation_thread_config: dict) -> str:
+        """
+        Transcribe video messages.
+        """
+        if telegram_message.content_type != "video":
+            logger.error("_handle_video_message: Invalid content type.")
+            return None
+        
+        file_id = telegram_message.video.file_id
+
+        if not file_id:
+            logger.error("_handle_video_message: Unable to get file_id.")
+            return None
+        
+        file_info = await bot.get_file(file_id)
+
+        # discard the video if it is too large
+        if file_info.file_size > MAX_VIDEO_SIZE:
+            logger.error(f"_handle_video_message: Video file is too large: {file_info.file_size} bytes.")
+            return None
+
+        video_path = f"temp_{file_id}.mp4"
+
+        await bot.download_file(file_info.file_path, video_path)
+        logger.info(f"_handle_video_message: File downloaded to {video_path}")
+
+        transcription = self.transcriber.transcribe_video(video_path)        
+        logger.info(f"_handle_video_message: Transcription: {transcription}")
+
+        # Remove the temporary file
+        try:
+            os.remove(video_path)
+            logger.info(f"_handle_video_message: Removed temporary file {video_path}")
+        except Exception as e:
+            logger.error(f"Error removing temporary file {video_path}: {str(e)}")
+
+        # insert the transcription into the workflow but specify that no answer should be generated
+        input_message_text = f"Видеосообщение от {telegram_message.from_user.full_name}. Транскрипция звука: {transcription or 'отсутствует'}, аннотация пользователя: {telegram_message.caption or 'отсутствует'}"
+
+        input_message = HumanMessage(input_message_text, additional_kwargs={"no_answer": True})
+        self.workflow_controller.invoke_flow(
+            {"messages": input_message}, 
+            conversation_thread_config
+        )
+
+
+        return transcription
