@@ -21,12 +21,16 @@ class Transcriber:
             # Load the video with MoviePy
             clip = moviepy.VideoFileClip(video_path)
 
+            # Check if the clip has audio
+            if clip is None or clip.audio is None:
+                return None
+
             # Write audio to OGG (compressed)
             # (Vorbis is a typical codec in an OGG container)
             clip.audio.write_audiofile(
                 temp_audio_path,
                 codec="libvorbis",
-                logger = None
+                logger=None
             )
 
             # Transcribe the extracted OGG audio
