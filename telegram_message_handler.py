@@ -15,7 +15,7 @@ from transcriber import Transcriber
 
 
 # Maximum video file size in bytes
-MAX_VIDEO_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_VIDEO_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
 class TelegramMessageHandler:
