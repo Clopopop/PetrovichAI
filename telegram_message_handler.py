@@ -60,11 +60,12 @@ class TelegramMessageHandler:
 
             # insert the transcription into the workflow and generate a response if applicable
             if transcription:
+                input_message_text = f"Голосовое сообщение от {telegram_message.from_user.full_name}: {transcription}"
+
                 # post the transcription as a text message to the chat
-                await telegram_message.reply(transcription)
+                await telegram_message.reply(input_message_text)
 
                 # process the transcription as a text message to store it in the workflow and generate a response
-                input_message_text = f"Голосовое сообщение от {telegram_message.from_user.full_name}: {transcription}"
                 output = self._handle_text_message(input_message_text, conversation_thread_config)
                 if output and output["messages"][-1].type == "ai":
                     response = output["messages"][-1].content
