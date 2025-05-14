@@ -173,6 +173,9 @@ class WorkflowController:
     def _is_bot_mentioned(self, message: str, bot_username: str) -> bool:
         """
         Checks if the message mentions the bot.
+
+        TODO: This method is not used, to be removed if not needed in the future.
+        WARNING: If used, check should be improved to avoid false positives in case keyword is part of another word.
         """
         if not message:
             return False
@@ -201,8 +204,8 @@ class WorkflowController:
             logger.info("_bot_should_respond: No answer requested.")
             return False
 
-        # First make simple checks like random probability and bot mention
-        if random.random() < self.config.RANDOM_RESPONSE_PROBABILITY or self._is_bot_mentioned(last_message, bot_username):
+        # First make simple checks like random probability
+        if random.random() < self.config.RANDOM_RESPONSE_PROBABILITY:
             return True
         
         # Check if the LLM thinks the bot should respond
