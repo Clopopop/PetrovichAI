@@ -202,9 +202,11 @@ class TelegramMessageHandler:
             logger.error("_handle_video_message: Unable to get file_id.")
             return None
         
-        file_info = await bot.get_file(file_id)
-
-        # discard the video if it is too large
+        try:
+            file_info = await bot.get_file(file_id)
+        except Exception as e:
+            logger.error(f"_handle_video_message: Failed to get file info for video {file_id}: {e}")
+            return None
         if file_info.file_size > MAX_VIDEO_SIZE:
             logger.error(f"_handle_video_message: Video file is too large: {file_info.file_size} bytes.")
             return None
@@ -214,7 +216,12 @@ class TelegramMessageHandler:
         await bot.download_file(file_info.file_path, video_path)
         logger.info(f"_handle_video_message: File downloaded to {video_path}")
 
-        transcription = self.transcriber.transcribe_video(video_path)        
+        try:
+            transcription = self.transcriber.transcribe_video(video_path)
+        except Exception as e:
+            logger.error(f"_handle_video_message: Error during transcription: {e}")
+            transcription = None
+
         logger.info(f"_handle_video_message: Transcription: {transcription}")
 
         # Remove the temporary file

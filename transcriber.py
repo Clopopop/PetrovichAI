@@ -1,6 +1,9 @@
 import os
 import moviepy
 from openai import OpenAI
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Transcriber:
     def __init__(self, api_key):
@@ -17,30 +20,20 @@ class Transcriber:
 
     def transcribe_video(self, video_path, temp_audio_path="temp_audio.ogg"):
         """Extract audio from a video, then transcribe it via Whisper."""
+        transcription_text = None
         try:
-            # Load the video with MoviePy
             clip = moviepy.VideoFileClip(video_path)
-
-            # Check if the clip has audio
-            if clip is None or clip.audio is None:
+        except Exception as e:
+            logger.error(f"transcribe_video: Failed to open video file {video_path}: {e}")
+            return None
+        try:
+            if clip.audio is None:
                 return None
-
-            # Write audio to OGG (compressed)
-            # (Vorbis is a typical codec in an OGG container)
-            clip.audio.write_audiofile(
-                temp_audio_path,
-                codec="libvorbis",
-                logger=None
-            )
-
-            # Transcribe the extracted OGG audio
+            clip.audio.write_audiofile(temp_audio_path, codec="libvorbis", logger=None)
             transcription_text = self.transcribe(temp_audio_path)
-
         finally:
-            # Close the clip and clean up
             if 'clip' in locals():
                 clip.close()
             if os.path.exists(temp_audio_path):
                 os.remove(temp_audio_path)
-
         return transcription_text
